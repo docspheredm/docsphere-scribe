@@ -1,0 +1,7 @@
+{
+  "name": "DocSphere Scribe",
+  "description": "An intelligent meeting assistant for DocSphere that captures system audio from Zoom or Google Meet, provides real-time transcription, and generates professional Minutes of Meeting (MoM) using Gemini.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
