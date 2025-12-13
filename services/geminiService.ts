@@ -18,9 +18,6 @@ export class LiveTranscriptionClient {
   private onErrorCallback: (error: Error) => void;
 
   constructor(onTranscription: (text: string) => void, onError: (error: Error) => void) {
-    if (!API_KEY) {
-        throw new Error("API_KEY is missing. Please check your .env configuration.");
-    }
     this.ai = new GoogleGenAI({ apiKey: API_KEY });
     this.onTranscriptionCallback = onTranscription;
     this.onErrorCallback = onError;
@@ -64,7 +61,7 @@ export class LiveTranscriptionClient {
           },
           onerror: (e) => {
             console.error("Gemini Live Error", e);
-            this.onErrorCallback(new Error("Connection error: " + (e.message || "Unknown error")));
+            this.onErrorCallback(new Error("Connection error"));
           }
         }
       });
@@ -123,9 +120,6 @@ export class LiveTranscriptionClient {
 // --- Static Generation for Minutes ---
 
 export const generateMinutes = async (transcript: string): Promise<MeetingMinutes> => {
-  if (!API_KEY) {
-      throw new Error("API_KEY is missing.");
-  }
   const ai = new GoogleGenAI({ apiKey: API_KEY });
   
   const prompt = `
