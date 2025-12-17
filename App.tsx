@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, Settings, FileText, Download, StopCircle, PlayCircle, Loader2, Monitor, AlertCircle, CheckCircle2, Info, XCircle, Smartphone } from 'lucide-react';
+import { Mic, Settings, FileText, Download, StopCircle, PlayCircle, Loader2, Monitor, AlertCircle, CheckCircle2, Info, XCircle, Smartphone, Activity } from 'lucide-react';
 import jsPDF from 'jspdf';
 import { Button } from './components/Button';
 import { LiveTranscriptionClient, generateMinutes } from './services/geminiService';
@@ -11,6 +11,7 @@ function App() {
   const [minutes, setMinutes] = useState<MeetingMinutes | null>(null);
   const [sourceType, setSourceType] = useState<AudioSourceType>('SYSTEM_AUDIO');
   const [error, setError] = useState<string | null>(null);
+  const [volumeLevel, setVolumeLevel] = useState<number>(0);
   
   // PWA Install State
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -20,57 +21,38 @@ function App() {
   const liveClientRef = useRef<LiveTranscriptionClient | null>(null);
   const transcriptRef = useRef<string>("");
 
-  // Update visual transcript state less frequently if needed, 
-  // but for now we sync directly.
   useEffect(() => {
     transcriptRef.current = transcript;
   }, [transcript]);
 
-  // Handle PWA Install Prompt
   useEffect(() => {
     const handleBeforeInstallPrompt = (e: Event) => {
-      // Prevent the mini-infobar from appearing on mobile
       e.preventDefault();
-      // Stash the event so it can be triggered later.
       setDeferredPrompt(e as BeforeInstallPromptEvent);
       setIsInstallable(true);
     };
-
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-
-    return () => {
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    };
+    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
   }, []);
 
   const handleInstallClick = async () => {
     if (!deferredPrompt) return;
-
-    // Show the install prompt
     deferredPrompt.prompt();
-
-    // Wait for the user to respond to the prompt
     const { outcome } = await deferredPrompt.userChoice;
-    
-    if (outcome === 'accepted') {
-      console.log('User accepted the install prompt');
-      setIsInstallable(false);
-    } else {
-      console.log('User dismissed the install prompt');
-    }
+    if (outcome === 'accepted') setIsInstallable(false);
     setDeferredPrompt(null);
   };
 
   const handleStartRecording = async () => {
     setError(null);
+    setVolumeLevel(0);
     try {
       let stream: MediaStream;
       
       if (sourceType === 'SYSTEM_AUDIO') {
-        // System audio capture (requires Tab/Window sharing with audio checked)
         try {
           stream = await navigator.mediaDevices.getDisplayMedia({ 
-            video: true, // Required for system audio in most browsers
+            video: true, 
             audio: {
               echoCancellation: false,
               noiseSuppression: false,
@@ -78,26 +60,17 @@ function App() {
             } 
           });
         } catch (e) {
-          throw new Error("Permission denied or cancelled. Please share a tab/window with audio enabled.");
+          throw new Error("Permission denied. Please select a Tab or Screen to share.");
         }
 
-        // CRITICAL CHECK: Did the user actually share audio?
-        // If they chose "Window" or forgot the checkbox, audio tracks will be empty.
         if (stream.getAudioTracks().length === 0) {
-            // Stop the video track immediately to clean up
             stream.getTracks().forEach(t => t.stop());
-            
-            // Create a specific helpful error message
-            throw new Error("NO AUDIO DETECTED. You likely selected 'Window' or forgot the checkbox.\n\nSOLUTION: Select 'Entire Screen' or 'Tab' and ensure 'Share system audio' is checked.");
+            throw new Error("NO AUDIO DETECTED. You likely selected 'Window' or forgot the checkbox. Please select 'Entire Screen' or 'Tab' and check 'Share system audio'.");
         }
 
       } else {
-        // Microphone capture
         stream = await navigator.mediaDevices.getUserMedia({ 
-            audio: {
-                echoCancellation: true,
-                noiseSuppression: true
-            } 
+            audio: { echoCancellation: true, noiseSuppression: true } 
         });
       }
 
@@ -106,6 +79,10 @@ function App() {
       liveClientRef.current = new LiveTranscriptionClient(
         (newText) => {
           setTranscript((prev) => prev + " " + newText);
+        },
+        (level) => {
+          // Smooth out the visualizer
+          setVolumeLevel(prev => (prev * 0.8) + (level * 0.2));
         },
         (err) => {
           console.error(err);
@@ -116,15 +93,8 @@ function App() {
 
       await liveClientRef.current.connectAndStart(stream);
       
-      // Handle user stopping the stream via browser UI
-      stream.getVideoTracks()[0]?.addEventListener('ended', () => {
-          handleStopRecording();
-      });
-      
-      // Also handle if the audio track stops unexpectedly
-      stream.getAudioTracks()[0]?.addEventListener('ended', () => {
-          handleStopRecording();
-      });
+      stream.getVideoTracks()[0]?.addEventListener('ended', handleStopRecording);
+      stream.getAudioTracks()[0]?.addEventListener('ended', handleStopRecording);
 
     } catch (e: any) {
       setError(e.message || "Failed to start recording");
@@ -139,8 +109,9 @@ function App() {
     }
     setStatus(MeetingStatus.PROCESSING);
     
-    if (transcriptRef.current.trim().length < 10) {
-        setError("Transcript too short to generate minutes.");
+    // We allow shorter transcripts for testing, but in production this check is good
+    if (transcriptRef.current.trim().length < 5) {
+        setError("Transcript was empty. Did you share the correct audio source?");
         setStatus(MeetingStatus.IDLE);
         return;
     }
@@ -170,7 +141,6 @@ function App() {
     const margin = 20;
     let y = margin;
 
-    // Helper for adding text
     const addText = (text: string, fontSize: number = 12, fontStyle: string = 'normal') => {
       doc.setFont("helvetica", fontStyle);
       doc.setFontSize(fontSize);
@@ -220,7 +190,48 @@ function App() {
       });
     }
 
-    doc.save("doc-sphere-minutes.pdf");
+    doc.save("meeting-minutes.pdf");
+  };
+
+  const handleDownloadDOC = () => {
+    if (!minutes) return;
+
+    const content = `
+      <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+      <head><meta charset='utf-8'><title>${minutes.title}</title></head>
+      <body>
+        <h1>${minutes.title}</h1>
+        <p><strong>Date:</strong> ${minutes.date}</p>
+        
+        <h2>Attendees</h2>
+        <ul>${minutes.attendees.map(a => `<li>${a}</li>`).join('')}</ul>
+
+        <h2>Agenda</h2>
+        <ul>${minutes.agenda.map(a => `<li>${a}</li>`).join('')}</ul>
+
+        <h2>Discussion Points</h2>
+        <ul>${minutes.discussionPoints.map(a => `<li>${a}</li>`).join('')}</ul>
+
+        <h2>Decisions</h2>
+        <ul>${minutes.decisions.map(a => `<li>${a}</li>`).join('')}</ul>
+
+        <h2>Action Items</h2>
+        <ul>${minutes.actionItems.map(a => `<li><strong>${a.task}</strong> (${a.assignee}) - Due: ${a.deadline || 'N/A'}</li>`).join('')}</ul>
+      </body>
+      </html>
+    `;
+
+    const blob = new Blob(['\ufeff', content], {
+      type: 'application/msword'
+    });
+    
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'meeting-minutes.doc';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   // --- Render Functions ---
@@ -269,20 +280,6 @@ function App() {
                 <span className="text-sm font-medium">Microphone</span>
               </button>
             </div>
-            
-            {sourceType === 'SYSTEM_AUDIO' && (
-              <div className="mt-4 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg text-sm text-blue-100">
-                <p className="font-semibold mb-2 flex items-center gap-2">
-                  <Info size={14} className="text-blue-400" /> 
-                  How to Enable Audio:
-                </p>
-                <ul className="list-disc list-inside space-y-2 text-blue-200/80 text-xs ml-1 leading-relaxed">
-                  <li><strong>Browser Join:</strong> Select <em>"Chrome Tab"</em> and check <em>"Share tab audio"</em>.</li>
-                  <li><strong>Desktop App (Windows):</strong> Select <em>"Entire Screen"</em> and check <em>"Share system audio"</em>.</li>
-                  <li className="text-red-300 font-semibold">Do not select "Window". Audio is disabled in Window mode.</li>
-                </ul>
-              </div>
-            )}
           </div>
 
           <Button 
@@ -294,86 +291,77 @@ function App() {
           </Button>
         </div>
       </div>
-
-      {/* Guide Section */}
-      <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-5xl px-4">
-        <div className="bg-slate-800/30 p-6 rounded-xl border border-slate-700/50 backdrop-blur-sm hover:bg-slate-800/50 transition-colors">
-          <div className="w-10 h-10 bg-blue-500/10 rounded-lg flex items-center justify-center mb-4 text-blue-400">
-            <Monitor size={20} />
-          </div>
-          <h3 className="text-slate-200 font-semibold mb-2">1. Select Source</h3>
-          <p className="text-slate-400 text-sm leading-relaxed">
-            Use <strong>System Audio</strong> for online meetings. <br/>
-            <em>Tip: Joining the meeting via your browser works best.</em>
-          </p>
-        </div>
-        
-        <div className="bg-slate-800/30 p-6 rounded-xl border border-slate-700/50 backdrop-blur-sm hover:bg-slate-800/50 transition-colors relative overflow-hidden">
-          <div className="absolute top-0 right-0 p-2 opacity-10">
-            <AlertCircle size={64} />
-          </div>
-          <div className="w-10 h-10 bg-purple-500/10 rounded-lg flex items-center justify-center mb-4 text-purple-400">
-             <AlertCircle size={20} />
-          </div>
-          <h3 className="text-slate-200 font-semibold mb-2">2. Avoid "Window" Tab</h3>
-          <p className="text-slate-400 text-sm leading-relaxed">
-            In the sharing popup: <br/>
-            ✅ <strong>Chrome Tab</strong> (Has Audio)<br/>
-            ✅ <strong>Entire Screen</strong> (Has Audio)<br/>
-            ❌ <strong>Window</strong> (NO Audio)
-          </p>
-        </div>
-
-        <div className="bg-slate-800/30 p-6 rounded-xl border border-slate-700/50 backdrop-blur-sm hover:bg-slate-800/50 transition-colors">
-          <div className="w-10 h-10 bg-emerald-500/10 rounded-lg flex items-center justify-center mb-4 text-emerald-400">
-            <CheckCircle2 size={20} />
-          </div>
-          <h3 className="text-slate-200 font-semibold mb-2">3. Auto-Minutes</h3>
-          <p className="text-slate-400 text-sm leading-relaxed">
-            DocSphere listens silently. When the meeting ends, click <strong>End Meeting</strong> to instantly generate professional minutes.
-          </p>
-        </div>
-      </div>
+      
+      {sourceType === 'SYSTEM_AUDIO' && (
+         <div className="flex gap-2 text-sm text-slate-500 bg-slate-900/50 px-4 py-2 rounded-full border border-slate-800">
+            <Info size={16} />
+            <span>Remember to check <strong>"Share system audio"</strong> in the popup</span>
+         </div>
+      )}
     </div>
   );
 
   const renderRecording = () => (
     <div className="flex flex-col h-full space-y-6">
+      {/* Recording Status Bar */}
       <div className="flex items-center justify-between bg-slate-800/80 p-4 rounded-xl border border-slate-700 shadow-lg backdrop-blur-md sticky top-4 z-10">
-        <div className="flex items-center gap-3">
-            <div className="relative">
-                <div className="w-3 h-3 bg-red-500 rounded-full animate-ping absolute"></div>
-                <div className="w-3 h-3 bg-red-500 rounded-full relative"></div>
+        <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-red-500/10 rounded-lg border border-red-500/20">
+                <div className="relative">
+                    <div className="w-3 h-3 bg-red-500 rounded-full animate-ping absolute"></div>
+                    <div className="w-3 h-3 bg-red-500 rounded-full relative"></div>
+                </div>
+                <span className="font-mono text-red-200 font-medium">REC</span>
             </div>
-            <span className="font-mono text-red-200">Recording Live...</span>
+            
+            {/* Audio Visualizer */}
+            <div className="flex items-center gap-2">
+                <div className="flex gap-0.5 items-end h-8 w-32 bg-slate-900/50 rounded px-1 pb-1">
+                    {[...Array(10)].map((_, i) => (
+                        <div 
+                            key={i}
+                            className={`flex-1 rounded-t-sm transition-all duration-75 ${
+                                (volumeLevel * 50) > i ? 'bg-emerald-400' : 'bg-slate-700'
+                            }`}
+                            style={{ height: `${Math.min(100, Math.max(10, (volumeLevel * 500) - (i * 10)))}%` }}
+                        ></div>
+                    ))}
+                </div>
+                {volumeLevel < 0.01 && (
+                     <span className="text-xs text-amber-400 flex items-center gap-1 animate-pulse">
+                        <AlertCircle size={12} /> No Audio?
+                     </span>
+                )}
+            </div>
         </div>
+        
         <Button variant="danger" onClick={handleStopRecording}>
-          <StopCircle size={20} /> End Meeting
+          <StopCircle size={20} /> End Meeting & Generate Options
         </Button>
       </div>
 
-      <div className="flex-1 bg-slate-900/50 rounded-2xl border border-slate-800 p-6 overflow-hidden flex flex-col relative min-h-[400px]">
-        <h3 className="text-slate-500 font-medium mb-4 uppercase tracking-wider text-xs flex justify-between">
-            <span>Live Transcript</span>
-            <span className="text-slate-600 lowercase font-normal italic">updates in real-time</span>
+      {/* Main Transcript Area */}
+      <div className="flex-1 bg-white rounded-2xl border border-slate-200 p-8 shadow-xl overflow-hidden flex flex-col relative min-h-[500px]">
+        <h3 className="text-slate-500 font-bold mb-6 uppercase tracking-wider text-sm border-b pb-4 flex items-center gap-2">
+            <Activity size={18} className="text-blue-500" />
+            Live Transcription
         </h3>
-        <div className="flex-1 overflow-y-auto space-y-2 scrollbar-hide">
+        <div className="flex-1 overflow-y-auto space-y-4">
           {transcript ? (
-             <p className="text-slate-200 text-lg leading-relaxed whitespace-pre-wrap">{transcript}</p>
+             <p className="text-slate-800 text-xl leading-8 whitespace-pre-wrap font-medium">{transcript}</p>
           ) : (
-            <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
-               <Loader2 size={32} className="animate-spin" />
-               <p>Listening for speech...</p>
-               {sourceType === 'SYSTEM_AUDIO' && (
-                 <div className="text-xs text-slate-500 max-w-sm text-center bg-slate-800 p-3 rounded-lg border border-slate-700">
-                    <p className="font-semibold text-slate-400 mb-1">Silence detected?</p>
-                    <p>If people are talking but nothing appears, you likely shared the <strong>Window</strong> instead of the <strong>Entire Screen</strong> or <strong>Tab</strong>.</p>
+            <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-4">
+               <Loader2 size={48} className="animate-spin text-slate-300" />
+               <p className="text-lg">Waiting for speech...</p>
+               {volumeLevel < 0.01 && (
+                 <div className="text-sm bg-red-50 text-red-600 p-4 rounded-lg max-w-md text-center">
+                    If people are talking but this bar is flat, stop and try again. 
+                    Ensure you check <strong>"Share system audio"</strong> when selecting the screen.
                  </div>
                )}
             </div>
           )}
-          {/* Auto-scroll anchor */}
-          <div className="h-4" /> 
+          <div className="h-12" /> 
         </div>
       </div>
     </div>
@@ -387,120 +375,67 @@ function App() {
       </div>
       <div className="text-center space-y-2">
         <h2 className="text-2xl font-semibold text-white">Generating Minutes</h2>
-        <p className="text-slate-400">Consulting Gemini to format your meeting notes...</p>
+        <p className="text-slate-400">Processing transcript and creating export formats...</p>
       </div>
     </div>
   );
 
   const renderReviewing = () => (
-    <div className="flex flex-col space-y-6 h-full">
-       <div className="flex items-center justify-between bg-slate-800/80 p-4 rounded-xl border border-slate-700 sticky top-4 z-10 backdrop-blur-md">
-        <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <FileText className="text-emerald-400" />
-            Meeting Minutes
-        </h2>
-        <div className="flex gap-2">
-            <Button variant="ghost" onClick={handleReset}>New Meeting</Button>
-            <Button onClick={handleDownloadPDF}>
-                <Download size={20} /> Export PDF
-            </Button>
-        </div>
-      </div>
+    <div className="flex flex-col items-center justify-center py-12 space-y-8 animate-fade-in">
+       
+       <div className="text-center space-y-2">
+           <div className="inline-flex items-center justify-center w-16 h-16 bg-emerald-500/10 rounded-full text-emerald-400 mb-4">
+               <CheckCircle2 size={32} />
+           </div>
+           <h2 className="text-3xl font-bold text-white">Meeting Ready</h2>
+           <p className="text-slate-400">Your meeting has been transcribed and processed.</p>
+       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-12">
-        {/* Editor Side */}
-        <div className="bg-white text-slate-900 rounded-xl shadow-2xl overflow-hidden min-h-[600px] flex flex-col">
-            <div className="p-8 space-y-6 flex-1 overflow-y-auto">
-                {minutes && (
-                    <>
-                        <div className="border-b pb-4">
-                            <input 
-                                className="text-3xl font-bold w-full outline-none placeholder-slate-300" 
-                                value={minutes.title}
-                                onChange={(e) => setMinutes({...minutes, title: e.target.value})}
-                                placeholder="Meeting Title"
-                            />
-                            <p className="text-slate-500 mt-2">
-                                Date: <input 
-                                    className="outline-none border-b border-transparent hover:border-slate-300 focus:border-blue-500"
-                                    value={minutes.date}
-                                    onChange={(e) => setMinutes({...minutes, date: e.target.value})}
-                                />
-                            </p>
-                        </div>
+       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-2xl">
+           <button 
+                onClick={handleDownloadDOC}
+                className="group p-6 bg-slate-800 hover:bg-blue-600 border border-slate-700 hover:border-blue-500 rounded-2xl transition-all duration-300 flex flex-col items-center gap-4 shadow-xl hover:shadow-2xl hover:-translate-y-1"
+           >
+               <div className="w-12 h-12 bg-blue-500/20 group-hover:bg-white/20 rounded-xl flex items-center justify-center text-blue-400 group-hover:text-white transition-colors">
+                   <FileText size={24} />
+               </div>
+               <div className="text-center">
+                   <h3 className="text-lg font-bold text-slate-100 group-hover:text-white">Download as DOC</h3>
+                   <p className="text-sm text-slate-400 group-hover:text-blue-100 mt-1">Editable Word Document</p>
+               </div>
+           </button>
 
-                        <section>
-                            <h3 className="text-lg font-bold text-slate-800 mb-2 uppercase tracking-wide text-xs">Attendees</h3>
-                            <textarea 
-                                className="w-full text-slate-600 outline-none resize-none overflow-hidden bg-slate-50 p-2 rounded"
-                                rows={minutes.attendees.length || 1}
-                                value={minutes.attendees.join(', ')}
-                                onChange={(e) => setMinutes({...minutes, attendees: e.target.value.split(', ')})}
-                            />
-                        </section>
+           <button 
+                onClick={handleDownloadPDF}
+                className="group p-6 bg-slate-800 hover:bg-red-600 border border-slate-700 hover:border-red-500 rounded-2xl transition-all duration-300 flex flex-col items-center gap-4 shadow-xl hover:shadow-2xl hover:-translate-y-1"
+           >
+               <div className="w-12 h-12 bg-red-500/20 group-hover:bg-white/20 rounded-xl flex items-center justify-center text-red-400 group-hover:text-white transition-colors">
+                   <Download size={24} />
+               </div>
+               <div className="text-center">
+                   <h3 className="text-lg font-bold text-slate-100 group-hover:text-white">Download as PDF</h3>
+                   <p className="text-sm text-slate-400 group-hover:text-red-100 mt-1">Professional Format</p>
+               </div>
+           </button>
+       </div>
 
-                         <section>
-                            <h3 className="text-lg font-bold text-slate-800 mb-2 uppercase tracking-wide text-xs">Agenda</h3>
-                             <textarea 
-                                className="w-full text-slate-600 outline-none resize-y bg-slate-50 p-2 rounded min-h-[80px]"
-                                value={minutes.agenda.map(a => `• ${a}`).join('\n')}
-                                onChange={(e) => setMinutes({...minutes, agenda: e.target.value.split('\n').map(l => l.replace(/^• /, ''))})}
-                            />
-                        </section>
+       <Button variant="ghost" onClick={handleReset} className="mt-8">
+           Start New Meeting
+       </Button>
 
-                        <section>
-                            <h3 className="text-lg font-bold text-slate-800 mb-2 uppercase tracking-wide text-xs">Decisions Made</h3>
-                             <textarea 
-                                className="w-full text-slate-600 outline-none resize-y bg-slate-50 p-2 rounded min-h-[80px]"
-                                value={minutes.decisions.map(d => `• ${d}`).join('\n')}
-                                onChange={(e) => setMinutes({...minutes, decisions: e.target.value.split('\n').map(l => l.replace(/^• /, ''))})}
-                            />
-                        </section>
-
-                        <section>
-                            <h3 className="text-lg font-bold text-slate-800 mb-2 uppercase tracking-wide text-xs">Action Items</h3>
-                            <div className="space-y-2">
-                                {minutes.actionItems.map((item, idx) => (
-                                    <div key={idx} className="flex gap-2 p-2 bg-yellow-50 rounded border border-yellow-100">
-                                        <input type="checkbox" className="mt-1" />
-                                        <div className="flex-1">
-                                            <input 
-                                                className="w-full bg-transparent font-medium outline-none text-slate-800"
-                                                value={item.task} 
-                                                onChange={(e) => {
-                                                    const newItems = [...minutes.actionItems];
-                                                    newItems[idx].task = e.target.value;
-                                                    setMinutes({...minutes, actionItems: newItems});
-                                                }}
-                                            />
-                                            <div className="flex gap-2 text-sm text-slate-500 mt-1">
-                                                <span>Assignee:</span>
-                                                 <input 
-                                                    className="bg-transparent outline-none text-slate-700 w-32"
-                                                    value={item.assignee} 
-                                                    onChange={(e) => {
-                                                        const newItems = [...minutes.actionItems];
-                                                        newItems[idx].assignee = e.target.value;
-                                                        setMinutes({...minutes, actionItems: newItems});
-                                                    }}
-                                                />
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </section>
-                    </>
-                )}
-            </div>
-        </div>
-
-        {/* Transcript Reference Side */}
-        <div className="bg-slate-800 rounded-xl p-6 border border-slate-700 h-[600px] overflow-y-auto">
-             <h3 className="text-slate-400 font-medium mb-4 uppercase tracking-wider text-xs sticky top-0 bg-slate-800 py-2">Original Transcript</h3>
-             <p className="text-slate-300 whitespace-pre-wrap leading-relaxed opacity-80 font-mono text-sm">{transcript}</p>
-        </div>
-      </div>
+       {/* Preview (Collapsible or just below) */}
+       <div className="w-full max-w-4xl mt-12 opacity-75 hover:opacity-100 transition-opacity">
+           <div className="bg-slate-900 rounded-xl border border-slate-800 p-6">
+               <h3 className="text-slate-500 font-medium mb-4 uppercase tracking-wider text-xs">Preview Content</h3>
+               <div className="prose prose-invert max-w-none">
+                    <h3 className="text-xl font-bold text-white">{minutes?.title}</h3>
+                    <div className="text-slate-300 space-y-2 mt-4">
+                        <p><strong>Decisions:</strong> {minutes?.decisions?.join(', ')}</p>
+                        <p><strong>Action Items:</strong> {minutes?.actionItems?.length} items recorded</p>
+                    </div>
+               </div>
+           </div>
+       </div>
     </div>
   );
 
@@ -517,7 +452,6 @@ function App() {
           </div>
           
           <div className="flex items-center gap-4">
-            {/* Install Button (Only visible if installable) */}
             {isInstallable && (
               <button 
                 onClick={handleInstallClick}
@@ -527,10 +461,9 @@ function App() {
                 Install App
               </button>
             )}
-
             <div className="text-xs text-slate-500 font-mono flex items-center gap-2">
                <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-               v1.2 (Ready) • Gemini 2.5
+               Live Transcription Ready
             </div>
           </div>
         </header>

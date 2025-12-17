@@ -1,5 +1,5 @@
 import { GoogleGenAI, LiveServerMessage, Modality, Type } from "@google/genai";
-import { createBlob, downsampleBuffer } from "../utils/audioUtils";
+import { createBlob } from "../utils/audioUtils";
 import { MeetingMinutes } from "../types";
 
 const API_KEY = process.env.API_KEY || '';
@@ -15,11 +15,17 @@ export class LiveTranscriptionClient {
   private inputSource: MediaStreamAudioSourceNode | null = null;
 
   private onTranscriptionCallback: (text: string) => void;
+  private onVolumeCallback: (level: number) => void;
   private onErrorCallback: (error: Error) => void;
 
-  constructor(onTranscription: (text: string) => void, onError: (error: Error) => void) {
+  constructor(
+    onTranscription: (text: string) => void, 
+    onVolume: (level: number) => void,
+    onError: (error: Error) => void
+  ) {
     this.ai = new GoogleGenAI({ apiKey: API_KEY });
     this.onTranscriptionCallback = onTranscription;
+    this.onVolumeCallback = onVolume;
     this.onErrorCallback = onError;
   }
 
@@ -38,7 +44,7 @@ export class LiveTranscriptionClient {
         config: {
           responseModalities: [Modality.AUDIO], // We must accept audio back, even if we don't play it
           inputAudioTranscription: {}, // Enable transcription of input
-          systemInstruction: "You are a passive meeting scribe. Your ONLY job is to listen. Do not speak. Do not reply. Just listen.",
+          systemInstruction: "You are a passive meeting scribe. Your ONLY job is to listen and transcribe accurately. Do not speak. Do not reply. Just listen.",
         },
         callbacks: {
           onopen: () => {
@@ -46,9 +52,6 @@ export class LiveTranscriptionClient {
             this.startAudioStreaming();
           },
           onmessage: (message: LiveServerMessage) => {
-            // We are primarily interested in inputTranscription (what the user/meeting said)
-            // Note: In a real "bot" scenario, we might also get model turns, but we instructed it to be silent.
-            
             if (message.serverContent?.inputTranscription) {
                const text = message.serverContent.inputTranscription.text;
                if (text) {
@@ -79,12 +82,17 @@ export class LiveTranscriptionClient {
 
     this.processor.onaudioprocess = (e) => {
       const inputData = e.inputBuffer.getChannelData(0);
-      // Downsample is handled by AudioContext being initialized at 16000 if browser supports it,
-      // otherwise we might need manual downsampling. 
-      // Most modern browsers support context sampleRate.
       
+      // Calculate Volume Level (RMS) for the UI
+      let sum = 0;
+      for (let i = 0; i < inputData.length; i++) {
+        sum += inputData[i] * inputData[i];
+      }
+      const rms = Math.sqrt(sum / inputData.length);
+      this.onVolumeCallback(rms);
+
+      // Send to Gemini
       const pcmBlob = createBlob(inputData, 16000);
-      
       this.sessionPromise?.then((session) => {
         session.sendRealtimeInput({ media: pcmBlob });
       });
@@ -111,9 +119,6 @@ export class LiveTranscriptionClient {
       this.mediaStream.getTracks().forEach(track => track.stop());
       this.mediaStream = null;
     }
-    // We can't explicitly "close" the session object returned by connect directly in the current SDK 
-    // without storing the session object properly, but stopping the stream effectively ends interaction.
-    // The socket usually closes on page unload or timeout.
   }
 }
 
