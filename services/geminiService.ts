@@ -1,4 +1,4 @@
-import { GoogleGenAI, LiveServerMessage, Modality, Type } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { createBlob } from "../utils/audioUtils";
 import { MeetingMinutes } from "../types";
 
@@ -23,7 +23,7 @@ export class LiveTranscriptionClient {
     onVolume: (level: number) => void,
     onError: (error: Error) => void
   ) {
-    this.ai = new GoogleGenAI({ apiKey: API_KEY });
+    this.ai = new GoogleGenerativeAI({ apiKey: API_KEY });
     this.onTranscriptionCallback = onTranscription;
     this.onVolumeCallback = onVolume;
     this.onErrorCallback = onError;
