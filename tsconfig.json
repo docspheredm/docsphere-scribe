@@ -20,5 +20,6 @@
     "allowSyntheticDefaultImports": true
   },
   "include": ["src", "*.tsx", "*.ts", "global.d.ts", "components", "services", "utils"],
+  "exclude": ["vite.config.ts", "node_modules"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
