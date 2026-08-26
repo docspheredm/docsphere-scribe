@@ -87,6 +87,7 @@ out
 .nuxt
 dist
 dist-extension
+*.zip
 
 # Gatsby files
 .cache/
