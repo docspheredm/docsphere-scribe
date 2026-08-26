@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Mic, Upload, Square, FileAudio, Clipboard, ClipboardCheck, RotateCcw, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
+import { Mic, Upload, Square, FileAudio, Clipboard, ClipboardCheck, RotateCcw, AlertCircle, CheckCircle2, Loader2, Settings } from 'lucide-react';
+import { isExtensionRuntime, getExtensionConfig, ExtensionConfig } from './services/extensionConfig';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -68,6 +69,22 @@ export default function App() {
   const [loadingMsgIndex, setLoadingMsgIndex] = useState(0);
   const [transcriptCopied, setTranscriptCopied] = useState(false);
   const [codesCopied, setCodesCopied] = useState(false);
+  const [extensionConfig, setExtensionConfig] = useState<ExtensionConfig | null>(null);
+
+  const runningInExtension = isExtensionRuntime();
+
+  // Load the org server URL / access code from chrome.storage when running as the extension.
+  useEffect(() => {
+    if (runningInExtension) {
+      getExtensionConfig().then(setExtensionConfig);
+    }
+  }, [runningInExtension]);
+
+  const openSettings = () => {
+    if (typeof chrome !== 'undefined' && chrome.runtime?.openOptionsPage) {
+      chrome.runtime.openOptionsPage();
+    }
+  };
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -159,6 +176,13 @@ export default function App() {
 
   const transcribe = async () => {
     if (!audioBlob) return;
+
+    if (runningInExtension && (!extensionConfig?.apiBaseUrl || (extensionConfig.apiBaseUrl && !extensionConfig.accessCode))) {
+      setErrorMessage('Set your organization\'s server URL and access code in Settings before transcribing.');
+      setAppState('error');
+      return;
+    }
+
     setAppState('transcribing');
     setErrorMessage(null);
 
@@ -174,9 +198,17 @@ export default function App() {
         );
       }
 
-      const response = await fetch('/api/transcribe', {
+      const endpoint = runningInExtension && extensionConfig
+        ? `${extensionConfig.apiBaseUrl}/api/transcribe`
+        : '/api/transcribe';
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (runningInExtension && extensionConfig?.accessCode) {
+        headers['X-Access-Code'] = extensionConfig.accessCode;
+      }
+
+      const response = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ audioData: base64, mimeType: audioMimeType }),
       });
 
@@ -242,9 +274,20 @@ export default function App() {
             <span className="text-slate-400 ml-2 text-sm">Transcribe</span>
           </div>
         </div>
-        <span className="text-xs text-slate-500 hidden sm:block">
-          Audio and transcripts are not stored. Closing this page permanently deletes everything.
-        </span>
+        <div className="flex items-center gap-4">
+          <span className="text-xs text-slate-500 hidden sm:block">
+            Audio and transcripts are not stored. Closing this page permanently deletes everything.
+          </span>
+          {runningInExtension && (
+            <button
+              onClick={openSettings}
+              title="Settings"
+              className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors"
+            >
+              <Settings size={18} />
+            </button>
+          )}
+        </div>
       </header>
 
       <main className="max-w-4xl mx-auto px-4 py-10">
