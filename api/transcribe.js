@@ -1,9 +1,21 @@
 import https from 'https';
+import crypto from 'crypto';
+
+function timingSafeEqual(a, b) {
+  const bufA = Buffer.from(String(a));
+  const bufB = Buffer.from(String(b));
+  if (bufA.length !== bufB.length) {
+    // Still run a comparison of equal length to avoid leaking length via timing.
+    crypto.timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
+}
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Access-Code');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
@@ -11,6 +23,14 @@ export default async function handler(req, res) {
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const requiredAccessCode = process.env.ACCESS_CODE;
+  if (requiredAccessCode) {
+    const providedCode = req.headers['x-access-code'];
+    if (!providedCode || !timingSafeEqual(providedCode, requiredAccessCode)) {
+      return res.status(401).json({ error: 'Missing or invalid access code.' });
+    }
   }
 
   const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
