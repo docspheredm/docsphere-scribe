@@ -32,10 +32,12 @@ these environment variables in the project settings:
 - `GEMINI_API_KEY` (or `API_KEY`) — your Google AI key. **Required.**
 - `ACCESS_CODE` — a shared secret string. **Strongly recommended** once you distribute the Chrome
   extension to more than one person: without it, anyone who installs the extension can call your
-  backend and spend your Gemini quota. Every doctor enters this same code once in the extension's
-  Settings page; requests without a matching `X-Access-Code` header are rejected with 401. This is
-  a basic shared-secret gate, not per-user accounts — good enough to stop casual abuse for a small
-  team, not a substitute for real auth/audit logging if you later need one per doctor.
+  backend and spend your Gemini quota. The extension build bakes this same code in (see below), so
+  requests carry it automatically; requests without a matching `X-Access-Code` header are rejected
+  with 401. This is a basic shared-secret gate, not per-user accounts and not a real secret once
+  it's built into a Chrome extension anyone can unzip and read — good enough to stop the general
+  public from hitting your backend and running up your bill, not a substitute for real per-doctor
+  auth/audit logging if you need that later.
 
 ## Chrome extension
 
@@ -44,30 +46,39 @@ doctor is working in.
 
 ### Build it
 
+Copy `.env.example` to `.env` and fill in the two `VITE_DEFAULT_*` values with your deployed
+backend's URL and its `ACCESS_CODE`:
+
 ```
+cp .env.example .env
+# edit .env: VITE_DEFAULT_API_BASE_URL, VITE_DEFAULT_ACCESS_CODE
 npm install
 npm run build:extension
 ```
 
-This produces `dist-extension/`, a ready-to-load unpacked extension (manifest, side panel,
-settings page, background worker, icons).
+This bakes your server URL and access code into the build, so **doctors install it and use it
+immediately — no setup screen, same as installing any consumer extension like Grammarly.** They
+never see or type a server address or access code. This produces `dist-extension/`, a ready-to-load
+unpacked extension (manifest, side panel, settings page, background worker, icons).
+
+If you skip the `.env` step, the extension still builds, but each doctor will have to manually
+enter a server URL and access code in Settings before it works — useful only for testing against
+different backends yourself.
 
 ### Load it locally
 
 1. Open `chrome://extensions`.
 2. Turn on **Developer mode** (top right).
 3. Click **Load unpacked** and select the `dist-extension` folder.
-4. Click the extension's icon in the toolbar to open the side panel. On first install it also
-   opens the **Settings** page automatically.
+4. Click the extension's icon in the toolbar to open the side panel — it works immediately if you
+   set the `.env` values above.
 
-### One-time setup per doctor
+### Settings (optional, for overrides only)
 
-In Settings, enter:
-
-- **Server URL** — the URL of your deployed backend (e.g. `https://your-deployment.vercel.app`).
-- **Access code** — the `ACCESS_CODE` value your organization set on the server.
-
-These are stored in `chrome.storage.local`, local to that browser/profile only.
+The gear icon in the side panel opens Settings, pre-filled with the built-in server URL and access
+code. Nobody needs to touch it — it's there only for the rare case where someone needs to point at
+a different server. Anything entered there is stored in `chrome.storage.local`, local to that
+browser/profile, and overrides the built-in default.
 
 ### Distributing to many doctors
 

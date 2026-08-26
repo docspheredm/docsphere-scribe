@@ -9,8 +9,18 @@ export interface ExtensionConfig {
 
 const STORAGE_KEYS = { apiBaseUrl: 'apiBaseUrl', accessCode: 'accessCode' } as const;
 
+// Baked in at build time (see .env / VITE_DEFAULT_* in the README) so a doctor can
+// install the extension and use it immediately, with no setup. The Settings page
+// still lets anyone override these per-browser if they need to point elsewhere.
+const DEFAULT_API_BASE_URL = (import.meta.env.VITE_DEFAULT_API_BASE_URL as string | undefined)?.trim() || '';
+const DEFAULT_ACCESS_CODE = (import.meta.env.VITE_DEFAULT_ACCESS_CODE as string | undefined)?.trim() || '';
+
 export function isExtensionRuntime(): boolean {
   return typeof chrome !== 'undefined' && !!chrome.storage?.local;
+}
+
+export function hasBuiltInDefaults(): boolean {
+  return !!DEFAULT_API_BASE_URL;
 }
 
 export async function getExtensionConfig(): Promise<ExtensionConfig> {
@@ -19,8 +29,8 @@ export async function getExtensionConfig(): Promise<ExtensionConfig> {
   }
   const stored = await chrome.storage.local.get([STORAGE_KEYS.apiBaseUrl, STORAGE_KEYS.accessCode]);
   return {
-    apiBaseUrl: (stored[STORAGE_KEYS.apiBaseUrl] as string) || '',
-    accessCode: (stored[STORAGE_KEYS.accessCode] as string) || '',
+    apiBaseUrl: (stored[STORAGE_KEYS.apiBaseUrl] as string) || DEFAULT_API_BASE_URL,
+    accessCode: (stored[STORAGE_KEYS.accessCode] as string) || DEFAULT_ACCESS_CODE,
   };
 }
 

@@ -7,6 +7,8 @@ import { resolve } from 'path'
 // so extension-src/manifest.json can reference them directly.
 export default defineConfig({
   root: resolve(__dirname, 'extension-src'),
+  // Env files (.env, .env.production) still live at the project root, not extension-src.
+  envDir: __dirname,
   plugins: [react()],
   build: {
     outDir: resolve(__dirname, 'dist-extension'),

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { CheckCircle2 } from 'lucide-react';
-import { getExtensionConfig, saveExtensionConfig } from '../services/extensionConfig';
+import { getExtensionConfig, saveExtensionConfig, hasBuiltInDefaults } from '../services/extensionConfig';
 import '../index.css';
 
 function OptionsPage() {
@@ -29,6 +29,12 @@ function OptionsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">DocSphere Transcribe</h1>
           <p className="text-slate-400 text-sm mt-1">Connect this extension to your organization's transcription server.</p>
+          {hasBuiltInDefaults() && (
+            <p className="text-xs text-cyan-400 mt-2">
+              This extension came pre-configured for your organization — you don't need to change anything here
+              unless you were told to use a different server.
+            </p>
+          )}
         </div>
 
         <form onSubmit={handleSave} className="space-y-5 p-6 rounded-2xl border border-slate-700" style={{ backgroundColor: '#0d1f38' }}>
