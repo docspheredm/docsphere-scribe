@@ -30,6 +30,8 @@ Deploy to Vercel (or any host that can run `api/transcribe.js` as a serverless f
 these environment variables in the project settings:
 
 - `GEMINI_API_KEY` (or `API_KEY`) — your Google AI key. **Required.**
+- `REQUIRE_ACCESS_CODE` — set to `true` to enforce `ACCESS_CODE`. Unset (the default) leaves the
+  backend open, e.g. for public testing of the web app, which does not send a code.
 - `ACCESS_CODE` — a shared secret string. **Strongly recommended** once you distribute the Chrome
   extension to more than one person: without it, anyone who installs the extension can call your
   backend and spend your Gemini quota. The extension build bakes this same code in (see below), so

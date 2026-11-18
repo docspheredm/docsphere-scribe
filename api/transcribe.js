@@ -25,7 +25,11 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const requiredAccessCode = process.env.ACCESS_CODE;
+  // The access-code gate is opt-in: it is only enforced when REQUIRE_ACCESS_CODE=true.
+  // Leave it off for open public testing (the web app does not send a code); set it to
+  // 'true' (with ACCESS_CODE set) to lock the backend down again.
+  const requiredAccessCode =
+    process.env.REQUIRE_ACCESS_CODE === 'true' ? process.env.ACCESS_CODE : '';
   if (requiredAccessCode) {
     const providedCode = req.headers['x-access-code'];
     if (!providedCode || !timingSafeEqual(providedCode, requiredAccessCode)) {
